@@ -1,0 +1,25 @@
+[package]
+name = "gh-search"
+version = "0.0.1"
+authors = ["David Elliott"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# [dependencies]
+# reqwest= "0.10.8"
+# serde_json = "1.0"
+# tokio = { version = "0.3", features = ["full"] }
+[dependencies]
+base64 = "0.13.0"
+clap = "2.33.3"
+regex = "1"
+reqwest = { version = "0.10", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "0.2", features = ["full"] }
+url = "2.1.1"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
