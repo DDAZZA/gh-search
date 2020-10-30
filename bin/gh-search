@@ -1,0 +1,6 @@
+#!/usr/bin/env ruby
+require "gh_search/cli"
+
+# ARGV.unshift(GhSearch::CLI.default_task) unless GhSearch::CLI.all_tasks.has_key?(ARGV[0]) || GhSearch::CLI.instance_variable_get(:@map).has_key?(ARGV[0])
+# GhSearch::CLI.new(ARGV).search
+GhSearch::CLI.start
