@@ -1,110 +1,35 @@
 use clap::{crate_name, crate_version, App, Arg};
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
-use reqwest::StatusCode;
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::env;
-use url::Url;
 
-const AUTH_ENV_VAR: &str = "GITHUB_API_TOKEN";
-#[derive(Deserialize, Debug)]
-struct GhResponse {
-    total_count: u32,
-    incomplete_results: bool,
-    items: Vec<ItemMatch>,
-}
+use crate::gh_client::find_files;
+use crate::gh_client::find_search_hits;
+use crate::gh_client::ItemMatch;
+use crate::gh_client::RequestSearch;
+use crate::gh_client::SearchHit;
 
-#[derive(Deserialize, Debug)]
-struct ItemMatch {
-    url: String,
-    repository: Repo,
-}
+mod gh_client;
 
-#[derive(Deserialize, Debug)]
-struct Repo {
-    full_name: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct SearchHit {
-    content: String,
-    encoding: String,
-    path: String,
-    sha: String,
-    html_url: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct GitHubClientError {
-    message: String,
-}
-
-impl SearchHit {
-    fn content_lines(&self) -> String {
-        self.content
-            .lines()
-            .map(|line| base64::decode(line).unwrap())
-            .map(|line| String::from_utf8_lossy(&line).to_string())
-            .collect::<String>()
-    }
-}
-
-// #[derive(Sized, Debug)]
-struct RequestSearch {
-    query: String,
-    page: u8,
-    // TODO convert to enum
-    options: HashMap<String, String>,
-}
-
-impl RequestSearch {
-    fn new(query: String) -> Self {
-        RequestSearch {
-            page: 1,
-            query: query,
-            options: HashMap::new(),
-        }
-    }
-
-    fn add(&mut self, key: String, value: String) -> &mut Self {
-        self.options.insert(key, value);
-        self
-    }
-
-    fn to_query(&self) -> String {
-        let mut url = format!("{}+in:file", self.query);
-        url = format!("{}+org:{}", url, self.options[&"org".to_string()]);
-        if self.options.contains_key(&"filename".to_string()) {
-            url = format!("{}+filename:{}", url, self.options[&"filename".to_string()]);
-        }
-        if self.options.contains_key(&"lang".to_string()) {
-            url = format!("{}+language:{}", url, self.options[&"lang".to_string()]);
-        }
-        format!("{}&page={}", url, self.page)
-    }
-}
-
-struct Repeater {
-    // items: std::slice::Iter<'a, ItemMatch>,
-    items: Vec<ItemMatch>,
-    incomplete_results: bool,
-    client: reqwest::Client,
-    request: RequestSearch,
-}
-
-impl Repeater {
-    fn new(request: RequestSearch) -> Self {
-        Repeater {
-            incomplete_results: true,
-            // items: Vec::new().iter(),
-            items: Vec::new(),
-            // items: iter::empty::<ItemMatch>,
-            client: reqwest::Client::new(),
-            request: request,
-        }
-    }
-}
+// struct Repeater {
+//     // items: std::slice::Iter<'a, ItemMatch>,
+//     items: Vec<ItemMatch>,
+//     incomplete_results: bool,
+//     client: reqwest::Client,
+//     request: RequestSearch,
+// }
+//
+// impl Repeater {
+//     fn new(request: RequestSearch) -> Self {
+//         Repeater {
+//             incomplete_results: true,
+//             // items: Vec::new().iter(),
+//             items: Vec::new(),
+//             // items: iter::empty::<ItemMatch>,
+//             client: reqwest::Client::new(),
+//             request: request,
+//         }
+//     }
+// }
 
 // impl<'a> Iterator for &'a Repeater {
 //     type Item = &'a ItemMatch;
@@ -225,71 +150,6 @@ pub fn parse_arguments() -> clap::ArgMatches<'static> {
         .get_matches()
 }
 
-// "https://api.github.com/search/code?q=HACK+in:file+org:Sage"
-async fn find_files(
-    client: &reqwest::Client,
-    request: &RequestSearch,
-) -> Result<GhResponse, Box<dyn std::error::Error>> {
-    let url = format!(
-        "https://api.github.com/search/code?q={}",
-        request.to_query()
-    );
-
-    println!("Calling {}", url);
-
-    let resp = client
-        // .get("https://api.github.com/search/code")
-        //
-        .get(url.as_str())
-        .headers(construct_headers())
-        // .query(&[("q", request.to_query().as_str())])
-        .send()
-        .await
-        .expect("Somthing went wrong making the API call");
-
-    // println!("Status: {:#?}", resp.text().await?);
-    match resp.status() {
-        StatusCode::OK => (),
-        status => {
-            eprintln!("{}", resp.status());
-            if status.is_client_error() {
-                let error_response = resp.json::<GitHubClientError>().await?;
-                eprintln!("Error: {}", error_response.message);
-            }
-            panic!();
-        }
-    }
-
-    let parsed_response = resp
-        .json::<GhResponse>()
-        .await
-        .expect("Couldnt parse JSON response");
-    Ok(parsed_response)
-}
-
-async fn find_search_hits(
-    client: &reqwest::Client,
-    item: &ItemMatch,
-) -> Result<SearchHit, Box<dyn std::error::Error>> {
-    let url = Url::parse(item.url.as_str())?;
-    let resp = client.get(url).headers(construct_headers()).send().await?;
-
-    match resp.status() {
-        StatusCode::OK => (),
-        status => {
-            eprintln!("{}", resp.status());
-            if status.is_client_error() {
-                let error_response = resp.json::<GitHubClientError>().await?;
-                eprintln!("Error: {}", error_response.message);
-            }
-            panic!();
-        }
-    }
-
-    let parsed_response = resp.json::<SearchHit>().await?;
-    Ok(parsed_response)
-}
-
 fn process_search_hits(query: &String, item: &ItemMatch, search_hit: SearchHit) {
     let re = Regex::new(query.as_str()).unwrap();
     let repo_name = &item.repository.full_name;
@@ -303,18 +163,4 @@ fn process_search_hits(query: &String, item: &ItemMatch, search_hit: SearchHit) 
             // println!("{}", line);
         }
     }
-}
-fn construct_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_str(&format!("{} {}", crate_name!(), crate_version!()).as_str()).unwrap(),
-    );
-    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-
-    if let Ok(api_token) = env::var(AUTH_ENV_VAR) {
-        let value = format!("token {}", api_token.as_str());
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&value).unwrap());
-    }
-    headers
 }
