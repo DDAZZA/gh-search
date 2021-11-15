@@ -1,4 +1,5 @@
 use clap::{crate_name, crate_version, App, Arg};
+use futures::join;
 use regex::Regex;
 use std::env;
 
@@ -71,15 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         request.add("org".to_string(), org.to_string());
     };
 
-    let client = reqwest::Client::new();
-
     // let foo = Repeater::new(request);
     //
     // for i in foo.into_iter() {
     //     println!("{}", i.url);
     // }
 
-    let gh_response = find_files(&client, &request).await?;
+    let gh_response = find_files(&request).await?;
     match gh_response.total_count {
         0 => {
             println!("No results found.");
@@ -88,15 +87,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => println!("Found in {} file(s)", gh_response.total_count),
     }
 
-    if gh_response.incomplete_results {
-        println!("WARN: Showing incomplete results.");
+    let mut threads = Vec::new();
+
+    for item in gh_response.items.iter().cloned() {
+        println!("{:#?}", &item.url);
+
+        let thread = tokio::spawn(async move {
+            // let parsed_response = find_search_hits(&item).await;
+
+            if let Ok(parsed_response) = find_search_hits(&item).await {
+                println!("{:#?} processing", &item.url);
+                process_search_hits(&request.query.clone(), &item, parsed_response);
+            }
+        });
+
+        threads.push(thread)
     }
 
-    for item in gh_response.items.iter() {
-        // println!("{:#?}", &item.url);
-        let parsed_response = find_search_hits(&client, &item).await?;
-        process_search_hits(&request.query, item, parsed_response);
-    }
+    futures::future::join_all(threads).await;
 
     Ok(())
 }

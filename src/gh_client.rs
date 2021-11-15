@@ -34,18 +34,19 @@ impl SearchHit {
 
 #[derive(Deserialize, Debug)]
 pub struct GhResponse {
-    pub total_count: u32,
+    pub total_count: usize,
+    // incomplete results are when timeout limit occurs
     pub incomplete_results: bool,
     pub items: Vec<ItemMatch>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ItemMatch {
     pub url: String,
     pub repository: Repo,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Repo {
     pub full_name: String,
 }
@@ -56,12 +57,14 @@ pub struct RequestSearch {
     pub page: u8,
     // TODO convert to enum
     pub options: HashMap<String, String>,
+    pub per_page: usize,
 }
 
 impl RequestSearch {
     pub fn new(query: String) -> Self {
         RequestSearch {
             page: 1,
+            per_page: 100,
             query: query,
             options: HashMap::new(),
         }
@@ -81,28 +84,28 @@ impl RequestSearch {
         if self.options.contains_key(&"lang".to_string()) {
             url = format!("{}+language:{}", url, self.options[&"lang".to_string()]);
         }
-        format!("{}&page={}", url, self.page)
+        url
+    }
+
+    fn to_url(&self) -> String {
+        let mut url = String::from("https://api.github.com/search/code");
+        url = format!("{}?q={}", url, self.to_query());
+        url = format!("{}&per_page={}", url, self.per_page);
+        url = format!("{}&page={}", url, self.page);
+        url
     }
 }
 
 // "https://api.github.com/search/code?q=HACK+in:file+org:Sage"
-pub async fn find_files(
-    client: &reqwest::Client,
-    request: &RequestSearch,
-) -> Result<GhResponse, Box<dyn std::error::Error>> {
-    let url = format!(
-        "https://api.github.com/search/code?q={}",
-        request.to_query()
-    );
+pub async fn find_files(request: &RequestSearch) -> Result<GhResponse, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
 
+    let url = request.to_url();
     println!("Calling {}", url);
 
     let resp = client
-        // .get("https://api.github.com/search/code")
-        //
         .get(url.as_str())
         .headers(construct_headers())
-        // .query(&[("q", request.to_query().as_str())])
         .send()
         .await
         .expect("Somthing went wrong making the API call");
@@ -124,22 +127,39 @@ pub async fn find_files(
         .json::<GhResponse>()
         .await
         .expect("Couldnt parse JSON response");
+
+    if parsed_response.incomplete_results {
+        panic!("Reduce page size");
+    }
+
+    if parsed_response.items.len() != request.per_page {
+        println!("Complete results");
+    } else {
+        println!("WARN: Not showing all results.");
+        let next_page = &request.page + 1;
+        println!("Next page {}", next_page);
+    }
+
     Ok(parsed_response)
 }
 
-pub async fn find_search_hits(
-    client: &reqwest::Client,
-    item: &ItemMatch,
-) -> Result<SearchHit, Box<dyn std::error::Error>> {
+pub async fn find_search_hits(item: &ItemMatch) -> Result<SearchHit, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+
     let url = Url::parse(item.url.as_str())?;
-    let resp = client.get(url).headers(construct_headers()).send().await?;
+    let resp = client
+        .get(url)
+        .headers(construct_headers())
+        .send()
+        .await
+        .unwrap();
 
     match resp.status() {
         StatusCode::OK => (),
         status => {
             eprintln!("{}", resp.status());
             if status.is_client_error() {
-                let error_response = resp.json::<GitHubClientError>().await?;
+                let error_response = resp.json::<GitHubClientError>().await.unwrap();
                 eprintln!("Error: {}", error_response.message);
             }
             panic!();

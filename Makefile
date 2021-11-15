@@ -14,6 +14,7 @@ deploy: build
 
 develop:
 	docker run --rm -it -w /app \
+		-e GITHUB_API_TOKEN \
 		-v "$(PWD)/Cargo.toml":/app/Cargo.toml:ro \
 		-v "$(PWD)/src/":/app/src/:ro \
 		rust:1.46 bash
